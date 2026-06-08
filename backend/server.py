@@ -11,8 +11,11 @@ from urllib.parse import urlparse
 
 import cgi
 
+from config import drive_config_status, load_env_file
 from drive_client import source_mime_type, upload_to_drive
 from init_db import DB_PATH, init_db, verify_password
+
+load_env_file()
 
 HOST = "127.0.0.1"
 PORT = 8000
@@ -74,7 +77,10 @@ class PortalHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self.write_json({"ok": True, "database": str(DB_PATH), "time": now_iso()})
+            self.write_json({"ok": True, "database": str(DB_PATH), "drive": drive_config_status(), "time": now_iso()})
+            return
+        if path == "/api/drive/status":
+            self.write_json({"ok": True, "drive": drive_config_status()})
             return
         if path == "/api/auth/me":
             user = self.require_user()

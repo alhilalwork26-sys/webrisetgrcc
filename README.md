@@ -24,6 +24,16 @@ Backend berjalan di `http://127.0.0.1:8000` dan membuat SQLite lokal di `backend
 
 Aktifkan Google Drive API di Google Cloud, lalu siapkan service account. Folder Drive tujuan perlu dibagikan ke email service account tersebut.
 
+Langkah ringkas:
+
+1. Buat/siapkan Google Cloud Project.
+2. Aktifkan **Google Drive API**.
+3. Buat **Service Account** dan download key JSON.
+4. Buat folder Google Drive, misalnya `GRCC Riset Uploads`.
+5. Share folder itu ke email service account dengan akses Editor.
+6. Copy `backend/.env.example` menjadi `backend/.env`.
+7. Isi path JSON dan ID folder Drive.
+
 Environment variable yang dipakai backend:
 
 ```bash
@@ -40,6 +50,12 @@ export GOOGLE_DRIVE_FOLDER_ID="id_folder_drive_grcc_riset"
 ```
 
 File `.docx` akan dicoba convert menjadi Google Docs, `.xlsx/.csv` menjadi Google Sheets, dan file lain tetap disimpan sebagai file Drive biasa.
+
+Cek status konfigurasi:
+
+```bash
+curl http://127.0.0.1:8000/api/drive/status
+```
 
 ## Akun Demo
 
