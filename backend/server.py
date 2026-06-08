@@ -3,11 +3,15 @@ from __future__ import annotations
 import json
 import secrets
 import sqlite3
+import tempfile
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+import cgi
+
+from drive_client import source_mime_type, upload_to_drive
 from init_db import DB_PATH, init_db, verify_password
 
 HOST = "127.0.0.1"
@@ -100,6 +104,9 @@ class PortalHandler(BaseHTTPRequestHandler):
                     conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
                     conn.commit()
             self.write_json({"ok": True})
+            return
+        if path == "/api/documents/upload":
+            self.upload_document()
             return
         self.write_error(404, "Endpoint tidak ditemukan.")
 
@@ -218,6 +225,62 @@ class PortalHandler(BaseHTTPRequestHandler):
             return json.loads(raw)
         except json.JSONDecodeError:
             return {}
+
+    def upload_document(self) -> None:
+        user = self.require_user()
+        if not user:
+            return
+
+        content_type = self.headers.get("Content-Type", "")
+        if not content_type.startswith("multipart/form-data"):
+            self.write_error(400, "Upload wajib memakai multipart/form-data.")
+            return
+
+        form = cgi.FieldStorage(
+            fp=self.rfile,
+            headers=self.headers,
+            environ={
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": content_type,
+            },
+        )
+        file_item = form["file"] if "file" in form else None
+        if file_item is None or not getattr(file_item, "filename", ""):
+            self.write_error(400, "File upload tidak ditemukan.")
+            return
+
+        filename = Path(file_item.filename).name
+        folder = str(form.getfirst("folder", "")).strip()
+        source_mime = source_mime_type(filename, str(form.getfirst("mimeType", "")).strip())
+        temp_path: Path | None = None
+
+        try:
+            with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                temp_path = Path(temp_file.name)
+                while True:
+                    chunk = file_item.file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    temp_file.write(chunk)
+
+            drive_payload = upload_to_drive(temp_path, filename, source_mime, folder)
+            drive_payload.update(
+                {
+                    "ok": True,
+                    "fileName": filename,
+                    "folder": folder,
+                    "uploadedBy": user["id"],
+                    "uploadedAt": now_iso(),
+                }
+            )
+            self.write_json(drive_payload)
+        except RuntimeError as error:
+            self.write_error(503, str(error))
+        except Exception as error:
+            self.write_error(500, f"Upload ke Google Drive gagal: {error}")
+        finally:
+            if temp_path and temp_path.exists():
+                temp_path.unlink()
 
     def read_state(self, conn: sqlite3.Connection) -> dict:
         row = conn.execute("SELECT payload_json FROM app_state WHERE id = 1").fetchone()

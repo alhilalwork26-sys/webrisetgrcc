@@ -4,6 +4,7 @@ import useAppStore from '../store/useAppStore'
 import { can } from '../config/roleConfig'
 import Modal from '../components/ui/Modal'
 import Button from '../components/ui/Button'
+import { api } from '../lib/api'
 
 const emptyForm = {
   judul: '',
@@ -60,6 +61,8 @@ export default function Documents() {
   const [form, setForm] = useState(emptyForm)
   const [folderForm, setFolderForm] = useState(emptyFolderForm)
   const [selectedFile, setSelectedFile] = useState(null)
+  const [uploadMessage, setUploadMessage] = useState('')
+  const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef(null)
   const docs = notulen.filter(doc => doc.visibility !== 'important' || can(role, 'documents', 'viewImportant'))
   const visibleDocs = activeFolder === 'all' ? docs : docs.filter(doc => doc.folder === activeFolder)
@@ -80,6 +83,8 @@ export default function Documents() {
   const resetForm = () => {
     setForm(emptyForm)
     setSelectedFile(null)
+    setUploadMessage('')
+    setUploading(false)
   }
   const resetFolderForm = () => setFolderForm(emptyFolderForm)
 
@@ -111,6 +116,7 @@ export default function Documents() {
     const file = event.target.files?.[0]
     if (!file) return
     setSelectedFile({
+      file,
       name: file.name,
       size: file.size,
       type: file.type || 'application/octet-stream',
@@ -125,34 +131,59 @@ export default function Documents() {
     event.target.value = ''
   }
 
-  const saveDocument = () => {
-    const normalizedUrl = normalizeDocUrl(form.googleDocUrl)
-    const googleFileId = extractGoogleFileId(normalizedUrl)
+  const saveDocument = async () => {
+    setUploading(true)
+    setUploadMessage('')
+    let uploadPayload = null
+
+    if (selectedFile?.file) {
+      try {
+        uploadPayload = await api.uploadDocument({
+          file: selectedFile.file,
+          title: form.judul || selectedFile.name,
+          folder: form.folder,
+          visibility: form.visibility,
+        })
+      } catch (error) {
+        setUploadMessage(error.message)
+        setUploading(false)
+        return
+      }
+    }
+
+    const normalizedUrl = normalizeDocUrl(uploadPayload?.googleDocUrl || form.googleDocUrl)
+    const googleFileId = uploadPayload?.googleFileId || extractGoogleFileId(normalizedUrl)
     addNotulen({
       ...form,
-      fileName: form.fileName || selectedFile?.name || '',
-      fileSize: selectedFile?.size || 0,
-      originalMimeType: selectedFile?.type || '',
+      fileName: uploadPayload?.fileName || form.fileName || selectedFile?.name || '',
+      fileSize: uploadPayload?.size || selectedFile?.size || 0,
+      originalMimeType: uploadPayload?.sourceMimeType || selectedFile?.type || '',
       googleDocUrl: normalizedUrl,
       googleFileId,
       storageProvider: googleFileId ? 'google_drive' : 'metadata',
-      source: googleFileId ? 'google_doc' : 'pending_upload',
-      mimeType: googleFileId ? 'application/vnd.google-apps.document' : '',
+      source: googleFileId ? 'google_drive_upload' : 'pending_upload',
+      mimeType: uploadPayload?.mimeType || (googleFileId ? 'application/vnd.google-apps.document' : ''),
+      converted: Boolean(uploadPayload?.converted),
+      uploadStatus: googleFileId ? 'uploaded' : 'pending_drive_config',
+      uploadError: '',
       tanggal: new Date().toISOString().split('T')[0],
       jenis: form.visibility === 'important' ? 'Penting' : 'Dokumen Riset',
       author: currentUser.name,
       peserta: currentUser.department,
-      keputusan: form.visibility === 'important' ? 'Akses real mengikuti permission Google Drive dan lapisan PIN website.' : 'Dokumen tersimpan sebagai metadata website dengan sumber Google Docs.',
+      keputusan: googleFileId
+        ? 'File berhasil diupload ke Google Drive dan link edit disimpan di portal.'
+        : 'File dicatat di portal, menunggu konfigurasi Google Drive API untuk upload real.',
       lastSyncedAt: new Date().toLocaleString('id-ID'),
     })
     addAuditLog({
       actor: currentUser.id,
-      action: googleFileId ? 'Tambah dokumen Google Docs' : 'Catat file untuk upload Drive',
+      action: googleFileId ? 'Upload dokumen ke Google Drive' : 'Catat file untuk upload Drive',
       target: form.judul,
       before: '-',
       after: googleFileId || selectedFile?.name || form.visibility,
       time: new Date().toLocaleString('id-ID'),
     })
+    setUploading(false)
     setShowForm(false)
     resetForm()
   }
@@ -318,8 +349,14 @@ export default function Documents() {
         <div className="space-y-4">
           <div className="rounded-xl bg-green-50 dark:bg-green-950/20 border border-green-100 dark:border-green-900/40 p-3">
             <p className="text-xs font-semibold text-green-700 dark:text-green-300">Alur Google Docs</p>
-            <p className="text-xs text-green-700/80 dark:text-green-300/80 mt-1">Pilih file untuk dicatat di portal. Upload otomatis ke Google Drive akan aktif setelah credential Drive API dipasang.</p>
+            <p className="text-xs text-green-700/80 dark:text-green-300/80 mt-1">Pilih file, lalu portal akan mengirimnya ke backend untuk upload ke Google Drive. Jika credential Drive belum dipasang, file dicatat sebagai menunggu upload.</p>
           </div>
+          {uploadMessage && (
+            <div className="rounded-xl bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-100 dark:border-yellow-900/40 p-3">
+              <p className="text-xs font-semibold text-yellow-700 dark:text-yellow-300">Upload Drive belum berhasil</p>
+              <p className="text-xs text-yellow-700/80 dark:text-yellow-300/80 mt-1">{uploadMessage}</p>
+            </div>
+          )}
           <div className="rounded-xl border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 p-4">
             <input ref={fileInputRef} type="file" onChange={pickFile} className="hidden" />
             <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -377,7 +414,7 @@ export default function Documents() {
           </div>
           <div className="flex gap-3">
             <Button variant="outline" onClick={() => setShowForm(false)} className="flex-1">Batal</Button>
-            <Button variant="primary" onClick={saveDocument} disabled={!form.judul.trim() && !selectedFile} className="flex-1"><Upload className="w-4 h-4" /> Simpan Upload</Button>
+            <Button variant="primary" onClick={saveDocument} disabled={uploading || (!form.judul.trim() && !selectedFile)} className="flex-1"><Upload className="w-4 h-4" /> {uploading ? 'Mengupload...' : 'Simpan Upload'}</Button>
           </div>
         </div>
       </Modal>

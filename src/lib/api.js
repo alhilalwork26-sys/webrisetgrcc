@@ -12,8 +12,9 @@ function setToken(token) {
 
 async function request(path, options = {}) {
   const token = getToken()
+  const isFormData = options.body instanceof FormData
   const headers = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(options.headers || {}),
   }
   if (token) headers.Authorization = `Bearer ${token}`
@@ -53,6 +54,18 @@ export const api = {
     return request('/api/state', {
       method: 'PUT',
       body: JSON.stringify({ state }),
+    })
+  },
+  async uploadDocument({ file, title, folder, visibility }) {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('title', title)
+    form.append('folder', folder)
+    form.append('visibility', visibility)
+    form.append('mimeType', file.type || '')
+    return request('/api/documents/upload', {
+      method: 'POST',
+      body: form,
     })
   },
 }
